@@ -1,0 +1,125 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Arr;
+
+class Sqlsrv extends Builder
+{
+
+    private $conn;
+
+    function __construct() 
+    {
+        parent::__construct(DB::connection());
+        $cfg = DB::connection()->getConfig(); 
+        $conInfo = array( "Database"=>$cfg['database'], "UID"=>$cfg['username'], "PWD"=>$cfg['password']);
+        $this->conn = sqlsrv_connect( gettype($cfg['host'])=="array" ? $cfg['host'][0] : $cfg['host'] , $conInfo );
+        /* hook up construct functions here */
+        /* like determining timestamps or speed of the query */
+    }
+
+    public function __destruct() 
+    {
+        sqlsrv_close( $this->conn ); 
+    }
+
+    public function insert( $table , $insertValues = null )
+    {
+        $q = $this->insert_sql( $table , $insertValues );
+        $rs = $this->perform($q);
+        return $rs->rows; 
+    }
+ 
+    public function update( $table , $where = null ,$setValues = null)
+    {
+        $q = $this
+            ->where( $where )
+            ->update_sql( $table, $setValues );    
+        $rs = $this->perform($q);
+        return $rs->rows; 
+    }
+ 
+   public function insert_sql($table, array $values)
+   {
+       $this->from = $table;
+       if (empty($values)) {
+           return true;
+       } 
+
+       if (! is_array(reset($values))) {
+           $values = [$values];
+       } 
+       else {
+           foreach ($values as $key => $value) {
+               ksort($value);
+
+               $values[$key] = $value;
+           }
+       }
+
+       $sql = $this->grammar->compileInsert($this, $values);
+       $bindings = $this->cleanBindings(Arr::flatten($values, 1));
+
+       /*FOR A FULL QUERY WITH VALUES; USUALLY FOR DEBUG */
+       // $binded=$sql;
+       // foreach($bindings as $b){  $binded = preg_replace('/'.preg_quote('?', '/').'/',"'". $b . "'",$binded ,1); }
+
+       return (object)array('sql'=>$sql,'bindings'=>$bindings,'binded'=>$binded);
+   }
+   
+   public function update_sql($table,array $values)
+   {
+       $this->from = $table;
+       $sql = $this->grammar->compileUpdate($this, $values);
+       $bindings = $this->cleanBindings( $this->grammar->prepareBindingsForUpdate($this->bindings, $values) );
+       
+       /*FOR A FULL QUERY WITH VALUES; USUALLY FOR DEBUG */
+       // $binded=$sql;
+       // foreach($bindings as $b){  $binded = preg_replace('/'.preg_quote('?', '/').'/',"'". $b . "'",$binded ,1); }
+       
+       return (object)array('sql'=>$sql,'bindings'=>$bindings,'binded'=>$binded);
+   }
+
+
+   
+   public function updateOrInsert( $table , $where = null , $setValues = null )
+   {
+       $result = $this->update($table,$where,$setValues);
+       if( $result < 1 ){
+           $result =  $this->insert($table,array_merge($where, $setValues));
+       } 
+
+       return $result;
+   }
+   
+   public function perform( $queries )
+   {  
+
+       $sql = $queries->sql;
+       $bindings = $queries->bindings;
+
+       $stmt = sqlsrv_query( $this->conn, $sql, $bindings);
+       
+       $errors=null;
+       if($stmt){
+           $rows = sqlsrv_rows_affected( $stmt ); 
+       }else{
+           $rows=-1;
+           if( ($errors = sqlsrv_errors() ) != null) {
+               dd($errors);
+           }
+       }
+
+       /*FOR A FULL QUERY WITH VALUES; USUALLY FOR DEBUG */
+       // $binded=$sql;
+       // foreach($bindings as $b){  $binded = preg_replace('/'.preg_quote('?', '/').'/',"'". $b . "'",$binded ,1); }
+       //#############
+
+       return (object)['rows' => $rows,'time'=>$time,'errors'=>$errors];
+   }
+
+
+}
